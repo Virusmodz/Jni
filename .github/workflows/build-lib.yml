@@ -9,50 +9,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣ Checkout source (Standard)
+    # 1️⃣ Checkout source
     - name: Checkout source
       uses: actions/checkout@v4
 
-    # 2️⃣ Check & Unzip (Safety added)
+    # 2️⃣ Unzip project
     - name: Unzip project
-      run: |
-        if [ -f "jni.zip" ]; then
-          echo "✅ jni.zip found, extracting..."
-          unzip -q jni.zip  # -q for quiet mode
-          ls -R jni/        # List files to verify structure in logs
-        else
-          echo "❌ Error: jni.zip not found!"
-          exit 1
-        fi
+      run: unzip jni.zip
 
-    # 3️⃣ Set up JDK (Standard)
+    # 3️⃣ Set up JDK
     - name: Set up JDK
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    # 4️⃣ Setup Android NDK (⚡ HUGE IMPROVEMENT ⚡)
-    # This replaces your Cache + Download + Set ENV steps with 1 simple step.
-    - name: Setup Android NDK
-      uses: nttld/setup-ndk@v1
+    # 4️⃣ Cache Android NDK (FIXED with id)
+    - name: Cache Android NDK
+      id: cache-ndk
+      uses: actions/cache@v4
       with:
-        ndk-version: r25c
+        path: android-ndk-r25c
+        key: ndk-r25c-linux
 
-    # 5️⃣ Build lib.so (Optimized)
-    - name: Build lib.so
+    # 5️⃣ Download NDK ONLY if cache miss
+    - name: Download Android NDK
+      if: steps.cache-ndk.outputs.cache-hit != 'true'
       run: |
-        ndk-build -j$(nproc) \
+        wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip android-ndk-r25c-linux.zip
+
+    # 6️⃣ Set NDK_HOME
+    - name: Set NDK_HOME
+      run: echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+    # 7️⃣ Build lib.so (parallel build)
+    - name: Build lib.so using ndk-build
+      run: |
+        $NDK_HOME/ndk-build -j$(nproc) \
           NDK_PROJECT_PATH=. \
           APP_BUILD_SCRIPT=jni/Android.mk \
-          NDK_APPLICATION_MK=jni/Application.mk \
-          NDK_DEBUG=0 \
-          V=1
+          NDK_APPLICATION_MK=jni/Application.mk
 
-    # 6️⃣ Upload lib.so (Standard)
+    # 8️⃣ Upload lib.so artifact
     - name: Upload lib.so
       uses: actions/upload-artifact@v4
       with:
         name: native-lib
         path: libs/**/*.so
-        if-no-files-found: error # Fail if no .so files were built
