@@ -24,16 +24,15 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    # 4️⃣ Cache Android NDK (IMPORTANT)
+    # 4️⃣ Cache Android NDK (FIXED with id)
     - name: Cache Android NDK
+      id: cache-ndk
       uses: actions/cache@v4
       with:
         path: android-ndk-r25c
         key: ndk-r25c-linux
-        restore-keys: |
-          ndk-r25c-
 
-    # 5️⃣ Download NDK only if cache NOT found
+    # 5️⃣ Download NDK ONLY if cache miss
     - name: Download Android NDK
       if: steps.cache-ndk.outputs.cache-hit != 'true'
       run: |
@@ -44,7 +43,7 @@ jobs:
     - name: Set NDK_HOME
       run: echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
 
-    # 7️⃣ Build lib.so (use all CPU cores)
+    # 7️⃣ Build lib.so (parallel build)
     - name: Build lib.so using ndk-build
       run: |
         $NDK_HOME/ndk-build -j$(nproc) \
