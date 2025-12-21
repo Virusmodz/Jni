@@ -2,8 +2,10 @@ name: Build JNI lib.so
 
 on:
   push:
-  workflow_dispatch:
-
+    paths:
+      - 'jni.zip'  # This tells GitHub: "Only run if jni.zip is changed"
+  workflow_dispatch: # This still allows you to run it manually
+  
 jobs:
   build:
     runs-on: ubuntu-latest
