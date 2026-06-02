@@ -1,112 +1,105 @@
 name: Build Protected JNI lib.so
 
 on:
-push:
-paths:
-- 'jni.zip'
-workflow_dispatch:
+  push:
+    paths:
+      - 'jni.zip'
+      - '.github/workflows/build-lib.yml'
+  workflow_dispatch:
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-steps:
-  # Checkout repository
-  - name: Checkout source
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-  # Extract JNI project
-  - name: Unzip project
-    run: |
-      unzip -o jni.zip
+      - name: Unzip project
+        run: unzip -o jni.zip
 
-  # Setup Java
-  - name: Setup JDK
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: '17'
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-  # Cache NDK
-  - name: Cache Android NDK
-    id: cache-ndk
-    uses: actions/cache@v4
-    with:
-      path: android-ndk-r26d
-      key: ndk-r26d-linux
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r26d
+          key: ndk-r26d-linux
 
-  # Download NDK if not cached
-  - name: Download Android NDK r26d
-    if: steps.cache-ndk.outputs.cache-hit != 'true'
-    run: |
-      wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
-      unzip -q android-ndk-r26d-linux.zip
+      - name: Download Android NDK r26d
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
 
-  # Set NDK environment
-  - name: Set NDK_HOME
-    run: |
-      echo "NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+      - name: Set NDK_HOME
+        run: echo "NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
 
-  # Download O-MVLL
-  - name: Download O-MVLL
-    run: |
-      wget -O omvll.tar.gz \
-      https://github.com/open-obfuscator/o-mvll/releases/download/1.6.0/omvll_v1-6-0_linux_2026-04-23T13_47_22.tar.gz
+      - name: Download O-MVLL
+        run: |
+          wget -q -O omvll.tar.gz \
+            https://github.com/open-obfuscator/o-mvll/releases/download/1.6.0/omvll_v1-6-0_linux_2026-04-23T13_47_22.tar.gz
 
-      mkdir -p omvll
-      tar -xzf omvll.tar.gz -C omvll
+          mkdir -p omvll
+          tar -xzf omvll.tar.gz -C omvll
 
-  # Show extracted files
-  - name: List O-MVLL files
-    run: |
-      find omvll -type f
+          echo "=== O-MVLL files ==="
+          find omvll -type f | sort
 
-  # Find plugin
-  - name: Find O-MVLL Plugin
-    run: |
-      PLUGIN=$(find omvll -type f -name "*.so" | head -n 1)
+      - name: Find O-MVLL plugin
+        run: |
+          PLUGIN="$(find "$PWD/omvll" -type f \( -name '*.so' -o -name '*.dylib' \) | head -n 1)"
+          if [ -z "$PLUGIN" ]; then
+            echo "O-MVLL plugin not found"
+            exit 1
+          fi
+          echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
+          echo "Plugin found: $PLUGIN"
 
-      echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
+      - name: Create O-MVLL config
+        run: |
+          cat > "$GITHUB_WORKSPACE/omvll_config.py" << 'EOF'
+          import omvll
 
-      echo "Plugin Found:"
-      echo "$PLUGIN"
+          class Config(omvll.ObfuscationConfig):
+              def flatten_cfg(self, module, function):
+                  return True
 
-  # Create O-MVLL config
-  - name: Create O-MVLL Config
-    run: |
-      cat > omvll_config.py << 'EOF'
-      import omvll
+              def obfuscate_string(self, module, function, string):
+                  return True
 
-      class Config(omvll.ObfuscationConfig):
+              def obfuscate_arithmetic(self, module, function):
+                  return True
 
-          def flatten_cfg(self, mod, func):
-              return True
+              def obfuscate_constants(self, module, function):
+                  return True
 
-          def obfuscate_string(self, mod, func, string):
-              return True
+          def omvll_get_config():
+              return Config()
+          EOF
 
-      def omvll_get_config():
-          return Config()
-      EOF
+      - name: Build lib.so
+        run: |
+          export OMVLL_CONFIG="$GITHUB_WORKSPACE/omvll_config.py"
+          export LD_LIBRARY_PATH="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH}"
 
-  # Build library
-  - name: Build lib.so
-    run: |
-      export OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py
+          "$NDK_HOME/ndk-build" -j"$(nproc)" \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=jni/Android.mk \
+            NDK_APPLICATION_MK=jni/Application.mk \
+            APP_CPPFLAGS="-fpass-plugin=$OMVLL_PLUGIN" \
+            APP_CFLAGS="-fpass-plugin=$OMVLL_PLUGIN" \
+            APP_LDFLAGS="-Wl,--gc-sections"
 
-      export LD_LIBRARY_PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:$LD_LIBRARY_PATH
-
-      $NDK_HOME/ndk-build -j$(nproc) \
-        NDK_PROJECT_PATH=. \
-        APP_BUILD_SCRIPT=jni/Android.mk \
-        NDK_APPLICATION_MK=jni/Application.mk \
-        APP_CPPFLAGS="-fpass-plugin=$OMVLL_PLUGIN"
-
-  # Upload output libraries
-  - name: Upload lib.so
-    uses: actions/upload-artifact@v4
-    with:
-      name: protected-lib
-      path: |
-        libs/**/*.so
-        obj/local/**/*.so
+      - name: Upload lib.so
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-lib
+          path: |
+            libs/**/*.so
+            obj/local/**/*.so
