@@ -65,26 +65,17 @@ jobs:
           echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
           echo "Plugin found: $PLUGIN"
 
-      - name: Set O-MVLL Python path and runtime env
+      - name: Set O-MVLL Python path
         run: |
-          # Prefer the layout shown in your log: omvll/Python-3.10.7/Lib
           PY_LIB_FILE="$(find "$PWD/omvll" -type f -path '*/Lib/encodings/__init__.py' | head -n 1)"
           if [ -n "$PY_LIB_FILE" ]; then
             PY_LIB_DIR="$(dirname "$(dirname "$PY_LIB_FILE")")"
             echo "OMVLL_PYTHONPATH=$PY_LIB_DIR" >> $GITHUB_ENV
             echo "Using OMVLL_PYTHONPATH=$PY_LIB_DIR"
           else
-            # Fallback for package layouts that use cpython-install
-            CPY_FILE="$(find "$PWD/omvll" -type f -path '*/lib/python3.10/encodings/__init__.py' | head -n 1)"
-            if [ -n "$CPY_FILE" ]; then
-              CPY_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$CPY_FILE")")")")"
-              echo "OMVLL_PYTHONPATH=$CPY_ROOT/lib/python310.zip:$CPY_ROOT/lib/python3.10:$CPY_ROOT/lib/lib-dynload" >> $GITHUB_ENV
-              echo "Using fallback OMVLL_PYTHONPATH from $CPY_ROOT"
-            else
-              echo "Could not find Python stdlib inside O-MVLL package"
-              find omvll -maxdepth 4 -type f | sort | tail -n 200
-              exit 1
-            fi
+            echo "Could not find Python stdlib inside O-MVLL package"
+            find omvll -maxdepth 4 -type f | sort | tail -n 200
+            exit 1
           fi
 
           echo "OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py" >> $GITHUB_ENV
@@ -94,12 +85,8 @@ jobs:
         run: |
           cat > "$GITHUB_WORKSPACE/omvll_config.py" << 'EOF'
           import omvll
-          from functools import lru_cache
 
           class Config(omvll.ObfuscationConfig):
-              def __init__(self):
-                  super().__init__()
-
               def flatten_cfg(self, module, function):
                   return True
 
@@ -112,12 +99,20 @@ jobs:
               def obfuscate_constants(self, module, function):
                   return True
 
-          @lru_cache(maxsize=1)
           def omvll_get_config():
               return Config()
           EOF
 
-      - name: Check BoxView header
+      - name: Create Application.mk
+        run: |
+          mkdir -p jni
+          cat > jni/Application.mk << 'EOF'
+          APP_PLATFORM := android-21
+          APP_ABI := armeabi-v7a
+          APP_STL := c++_static
+          EOF
+
+      - name: Fix missing BoxView.hpp
         run: |
           if [ ! -f "jni/BoxView.hpp" ]; then
             FOUND="$(find . -name 'BoxView.hpp' | head -n 1)"
@@ -125,14 +120,13 @@ jobs:
               cp -f "$FOUND" jni/BoxView.hpp
               echo "Copied $FOUND to jni/BoxView.hpp"
             else
-              echo "BoxView.hpp is still missing"
-              echo "You need to add it to jni/ or fix the include path in Android.mk"
+              echo "BoxView.hpp not found in repository"
             fi
           fi
 
       - name: Build lib.so
         run: |
-          "$NDK_HOME/ndk-build" -j"$(nproc)" \
+          "$NDK_HOME/ndk-build" -j2 \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=jni/Android.mk \
             NDK_APPLICATION_MK=jni/Application.mk \
