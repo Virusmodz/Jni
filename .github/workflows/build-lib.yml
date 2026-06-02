@@ -1,63 +1,84 @@
-name: Build JNI lib.so
+name: Build Protected JNI lib.so
 
 on:
   push:
     paths:
-      - 'jni.zip'  # This tells GitHub: "Only run if jni.zip is changed"
-  workflow_dispatch: # This still allows you to run it manually
-  
+      - 'jni.zip'
+      - 'omvll_v1-6-0_linux_2026-04-23T13_47_22.tar.gz'
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣ Checkout source
     - name: Checkout source
       uses: actions/checkout@v4
 
-    # 2️⃣ Unzip project
-    - name: Unzip project
-      run: unzip jni.zip
+    - name: Extract JNI Project
+      run: unzip -o jni.zip
 
-    # 3️⃣ Set up JDK
-    - name: Set up JDK
+    - name: Setup Java
       uses: actions/setup-java@v4
       with:
-        distribution: 'temurin'
+        distribution: temurin
         java-version: '17'
 
-    # 4️⃣ Cache Android NDK (FIXED with id)
     - name: Cache Android NDK
       id: cache-ndk
       uses: actions/cache@v4
       with:
-        path: android-ndk-r21e
-        key: ndk-r21e-linux
+        path: android-ndk-r26d
+        key: ndk-r26d-linux
 
-    # 5️⃣ Download NDK ONLY if cache miss
-    - name: Download Android NDK
+    - name: Download Android NDK r26d
       if: steps.cache-ndk.outputs.cache-hit != 'true'
       run: |
-        wget https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
-        unzip android-ndk-r21e-linux-x86_64.zip
+        wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+        unzip -q android-ndk-r26d-linux.zip
 
-    # 6️⃣ Set NDK_HOME
-    - name: Set NDK_HOME
-      run: echo "NDK_HOME=$PWD/android-ndk-r21e" >> $GITHUB_ENV
-
-
-    # 7️⃣ Build lib.so (parallel build)
-    - name: Build lib.so using ndk-build
+    - name: Set NDK Environment
       run: |
+        echo "NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+
+    - name: Extract O-MVLL
+      run: |
+        mkdir omvll
+        tar -xzf omvll_v1-6-0_linux_2026-04-23T13_47_22.tar.gz -C omvll
+
+    - name: Find O-MVLL Plugin
+      run: |
+        PLUGIN=$(find omvll -type f -name "*.so" | head -n 1)
+        echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
+        echo "Plugin: $PLUGIN"
+
+    - name: Create O-MVLL Config
+      run: |
+        cat > omvll_config.py << 'EOF'
+        import omvll
+
+        class Config(omvll.ObfuscationConfig):
+            def flatten_cfg(self, mod, func):
+                return True
+
+        def omvll_get_config():
+            return Config()
+        EOF
+
+    - name: Build lib.so
+      run: |
+        export OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py
+
         $NDK_HOME/ndk-build -j$(nproc) \
           NDK_PROJECT_PATH=. \
           APP_BUILD_SCRIPT=jni/Android.mk \
-          NDK_APPLICATION_MK=jni/Application.mk
+          NDK_APPLICATION_MK=jni/Application.mk \
+          APP_CPPFLAGS="-fpass-plugin=$OMVLL_PLUGIN"
 
-    # 8️⃣ Upload lib.so artifact
-    - name: Upload lib.so
+    - name: Upload Libraries
       uses: actions/upload-artifact@v4
       with:
-        name: native-lib
-        path: libs/**/*.so
-        
+        name: protected-lib
+        path: |
+          libs/**/*.so
+          obj/local/**/*.so
