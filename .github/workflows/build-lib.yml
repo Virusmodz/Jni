@@ -16,7 +16,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Unzip project
-        run: unzip -o jni.zip
+        run: |
+          unzip -o jni.zip
+          echo "=== Project files ==="
+          find . -maxdepth 3 -type f | sort
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -34,7 +37,8 @@ jobs:
       - name: Download Android NDK r26d
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O android-ndk-r26d-linux.zip
+          wget -q -O android-ndk-r26d-linux.zip \
+            https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
           unzip -q android-ndk-r26d-linux.zip
 
       - name: Set NDK_HOME
@@ -61,6 +65,26 @@ jobs:
           echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
           echo "Plugin found: $PLUGIN"
 
+      - name: Set O-MVLL Python paths
+        run: |
+          PY_ROOT="$(find "$PWD/omvll" -type d -name 'cpython-install' | head -n 1)"
+          if [ -z "$PY_ROOT" ]; then
+            echo "cpython-install folder not found inside O-MVLL package"
+            echo "Available files:"
+            find omvll -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "PY_ROOT=$PY_ROOT" >> $GITHUB_ENV
+
+          {
+            echo "OMVLL_PYTHONPATH=$PY_ROOT/lib/python310.zip:$PY_ROOT/lib/python3.10:$PY_ROOT/lib/lib-dynload"
+            echo "OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py"
+            echo "LD_LIBRARY_PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:$LD_LIBRARY_PATH"
+          } >> $GITHUB_ENV
+
+          echo "Python root: $PY_ROOT"
+
       - name: Create O-MVLL config
         run: |
           cat > "$GITHUB_WORKSPACE/omvll_config.py" << 'EOF'
@@ -83,11 +107,21 @@ jobs:
               return Config()
           EOF
 
+      - name: Fix missing BoxView.hpp if present elsewhere
+        run: |
+          if [ ! -f "jni/BoxView.hpp" ]; then
+            FOUND="$(find . -name 'BoxView.hpp' | head -n 1)"
+            if [ -n "$FOUND" ]; then
+              echo "Copying $FOUND to jni/BoxView.hpp"
+              cp -f "$FOUND" jni/BoxView.hpp
+            else
+              echo "BoxView.hpp not found anywhere in the repository"
+              echo "You must include it in jni/ or add the correct include path in Android.mk"
+            fi
+          fi
+
       - name: Build lib.so
         run: |
-          export OMVLL_CONFIG="$GITHUB_WORKSPACE/omvll_config.py"
-          export LD_LIBRARY_PATH="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH}"
-
           "$NDK_HOME/ndk-build" -j"$(nproc)" \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=jni/Android.mk \
