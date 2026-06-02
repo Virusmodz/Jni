@@ -7,9 +7,6 @@ on:
       - '.github/workflows/build-lib.yml'
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +19,7 @@ jobs:
         run: |
           unzip -o jni.zip
           echo "=== Project files ==="
-          find . -maxdepth 3 -type f | sort
+          find . -maxdepth 4 -type f | sort
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -68,16 +65,28 @@ jobs:
           echo "OMVLL_PLUGIN=$PLUGIN" >> $GITHUB_ENV
           echo "Plugin found: $PLUGIN"
 
-      - name: Set O-MVLL Python paths
+      - name: Set O-MVLL Python path and runtime env
         run: |
-          PY_ROOT="$(find "$PWD/omvll" -type d -name 'cpython-install' | head -n 1)"
-          if [ -z "$PY_ROOT" ]; then
-            echo "cpython-install folder not found inside O-MVLL package"
-            find omvll -maxdepth 3 -type f | sort
-            exit 1
+          # Prefer the layout shown in your log: omvll/Python-3.10.7/Lib
+          PY_LIB_FILE="$(find "$PWD/omvll" -type f -path '*/Lib/encodings/__init__.py' | head -n 1)"
+          if [ -n "$PY_LIB_FILE" ]; then
+            PY_LIB_DIR="$(dirname "$(dirname "$PY_LIB_FILE")")"
+            echo "OMVLL_PYTHONPATH=$PY_LIB_DIR" >> $GITHUB_ENV
+            echo "Using OMVLL_PYTHONPATH=$PY_LIB_DIR"
+          else
+            # Fallback for package layouts that use cpython-install
+            CPY_FILE="$(find "$PWD/omvll" -type f -path '*/lib/python3.10/encodings/__init__.py' | head -n 1)"
+            if [ -n "$CPY_FILE" ]; then
+              CPY_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$CPY_FILE")")")")"
+              echo "OMVLL_PYTHONPATH=$CPY_ROOT/lib/python310.zip:$CPY_ROOT/lib/python3.10:$CPY_ROOT/lib/lib-dynload" >> $GITHUB_ENV
+              echo "Using fallback OMVLL_PYTHONPATH from $CPY_ROOT"
+            else
+              echo "Could not find Python stdlib inside O-MVLL package"
+              find omvll -maxdepth 4 -type f | sort | tail -n 200
+              exit 1
+            fi
           fi
 
-          echo "OMVLL_PYTHONPATH=$PY_ROOT/lib/python310.zip:$PY_ROOT/lib/python3.10:$PY_ROOT/lib/lib-dynload" >> $GITHUB_ENV
           echo "OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
 
@@ -85,8 +94,12 @@ jobs:
         run: |
           cat > "$GITHUB_WORKSPACE/omvll_config.py" << 'EOF'
           import omvll
+          from functools import lru_cache
 
           class Config(omvll.ObfuscationConfig):
+              def __init__(self):
+                  super().__init__()
+
               def flatten_cfg(self, module, function):
                   return True
 
@@ -99,11 +112,12 @@ jobs:
               def obfuscate_constants(self, module, function):
                   return True
 
+          @lru_cache(maxsize=1)
           def omvll_get_config():
               return Config()
           EOF
 
-      - name: Fix missing BoxView.hpp
+      - name: Check BoxView header
         run: |
           if [ ! -f "jni/BoxView.hpp" ]; then
             FOUND="$(find . -name 'BoxView.hpp' | head -n 1)"
@@ -111,7 +125,8 @@ jobs:
               cp -f "$FOUND" jni/BoxView.hpp
               echo "Copied $FOUND to jni/BoxView.hpp"
             else
-              echo "BoxView.hpp not found in repository"
+              echo "BoxView.hpp is still missing"
+              echo "You need to add it to jni/ or fix the include path in Android.mk"
             fi
           fi
 
