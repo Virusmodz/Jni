@@ -7,13 +7,16 @@ on:
       - '.github/workflows/build-lib.yml'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Unzip project
         run: |
@@ -22,14 +25,14 @@ jobs:
           find . -maxdepth 3 -type f | sort
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Cache Android NDK
         id: cache-ndk
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: android-ndk-r26d
           key: ndk-r26d-linux
@@ -70,20 +73,13 @@ jobs:
           PY_ROOT="$(find "$PWD/omvll" -type d -name 'cpython-install' | head -n 1)"
           if [ -z "$PY_ROOT" ]; then
             echo "cpython-install folder not found inside O-MVLL package"
-            echo "Available files:"
             find omvll -maxdepth 3 -type f | sort
             exit 1
           fi
 
-          echo "PY_ROOT=$PY_ROOT" >> $GITHUB_ENV
-
-          {
-            echo "OMVLL_PYTHONPATH=$PY_ROOT/lib/python310.zip:$PY_ROOT/lib/python3.10:$PY_ROOT/lib/lib-dynload"
-            echo "OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py"
-            echo "LD_LIBRARY_PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:$LD_LIBRARY_PATH"
-          } >> $GITHUB_ENV
-
-          echo "Python root: $PY_ROOT"
+          echo "OMVLL_PYTHONPATH=$PY_ROOT/lib/python310.zip:$PY_ROOT/lib/python3.10:$PY_ROOT/lib/lib-dynload" >> $GITHUB_ENV
+          echo "OMVLL_CONFIG=$GITHUB_WORKSPACE/omvll_config.py" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib64:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
 
       - name: Create O-MVLL config
         run: |
@@ -107,16 +103,15 @@ jobs:
               return Config()
           EOF
 
-      - name: Fix missing BoxView.hpp if present elsewhere
+      - name: Fix missing BoxView.hpp
         run: |
           if [ ! -f "jni/BoxView.hpp" ]; then
             FOUND="$(find . -name 'BoxView.hpp' | head -n 1)"
             if [ -n "$FOUND" ]; then
-              echo "Copying $FOUND to jni/BoxView.hpp"
               cp -f "$FOUND" jni/BoxView.hpp
+              echo "Copied $FOUND to jni/BoxView.hpp"
             else
-              echo "BoxView.hpp not found anywhere in the repository"
-              echo "You must include it in jni/ or add the correct include path in Android.mk"
+              echo "BoxView.hpp not found in repository"
             fi
           fi
 
@@ -131,7 +126,7 @@ jobs:
             APP_LDFLAGS="-Wl,--gc-sections"
 
       - name: Upload lib.so
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: protected-lib
           path: |
